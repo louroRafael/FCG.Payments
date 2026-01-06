@@ -1,0 +1,73 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [ "*" ]
+  pull_request:
+    branches: [ "*" ]
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    name: Build do Projeto e Testes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restaurar Dependências
+        run: dotnet restore
+
+      - name: Compilar Release
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Executar Testes
+        run: dotnet test --configuration Release --no-restore --verbosity normal
+
+  docker-build:
+      name: Build da Imagem Docker
+      runs-on: ubuntu-latest
+      needs: build-test
+      steps:
+        - name: Checkout
+          uses: actions/checkout@v4
+  
+        - name: Build da Imagem
+          uses: docker/build-push-action@v6.18.0
+          with:
+            context: .
+            push: false
+            tags: fcg-payments-api:test
+
+  docker-deploy:
+    name: Publica Imagem Docker no DockerHub
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.ref == 'refs/heads/main' # Executa apenas na branch 'main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login no DockerHub
+        uses: docker/login-action@v3.5.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Definir TAG da Imagem
+        id: set_tag
+        run: echo "TAG=${GITHUB_SHA::7}" >> $GITHUB_ENV # usa os 7 primeiros chars do commit
+
+      - name: Build e Push da Imagem Docker
+        uses: docker/build-push-action@v6.18.0
+        with:
+          context: .
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/fcg-payments-api:${{ env.TAG }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/fcg-payments-api:latest
+          push: true
